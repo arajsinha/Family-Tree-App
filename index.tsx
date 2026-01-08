@@ -1,23 +1,30 @@
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, Session } from 'react';
+
+import { supabase } from './supabaseClient';
+import Login from './components/Login';
+import 'regenerator-runtime/runtime';
 import { createRoot } from 'react-dom/client';
-import { 
-  Plus, 
-  Edit2, 
-  Download, 
-  Upload, 
-  Users, 
-  Maximize2, 
-  Trash2, 
-  Globe, 
-  User, 
-  Calendar, 
-  FileText, 
-  X, 
-  Venus, 
+import {
+  Plus,
+  Edit2,
+  Download,
+  Upload,
+  Users,
+  Maximize2,
+  Trash2,
+  Globe,
+  User,
+  Calendar,
+  FileText,
+  X,
+  Venus,
   Mars,
   Info,
-  Search
+  Search,
+  Mail,  // Add this
+  Phone,  // Add this
+  Eye // Add this
 } from 'lucide-react';
 
 // --- Data Models ---
@@ -32,6 +39,8 @@ interface Person {
   deathYear?: number;
   notes?: string;
   external?: boolean;
+  email?: string;
+  phone?: string;
 }
 
 interface Marriage {
@@ -187,10 +196,10 @@ const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
       <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 animate-in zoom-in duration-300 ease-out-back">
         <div className="px-10 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
           <div className="flex items-center gap-3">
-             <div className="p-2 bg-indigo-100 rounded-xl text-indigo-600">
-                <Info size={20} />
-             </div>
-             <h3 className="text-xl font-black text-slate-800 tracking-tight">{title}</h3>
+            <div className="p-2 bg-indigo-100 rounded-xl text-indigo-600">
+              <Info size={20} />
+            </div>
+            <h3 className="text-xl font-black text-slate-800 tracking-tight">{title}</h3>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-all">
             <X size={24} />
@@ -203,30 +212,142 @@ const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
 };
 
 const App = () => {
-  const initialIdRef = useRef(generateId());
-  const [tree, setTree] = useState<FamilyTree>({
-    persons: { [initialIdRef.current]: { id: initialIdRef.current, name: 'Root Ancestor', gender: 'male', birthYear: 1950 } },
-    marriages: {},
-    children: []
-  });
-  
-  const [focusId, setFocusId] = useState<string | null>(initialIdRef.current);
+  const [tree, setTree] = useState<FamilyTree>({ persons: {}, marriages: {}, children: [] });
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [editingPerson, setEditingPerson] = useState<Person | null>(null);
   const [addingChildToMarriageId, setAddingChildToMarriageId] = useState<string | null>(null);
   const [addingSpouseToPersonId, setAddingSpouseToPersonId] = useState<string | null>(null);
   const [addingParentToPersonId, setAddingParentToPersonId] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: -500, y: -250, w: 1000, h: 800 });
   const [searchQuery, setSearchQuery] = useState('');
-  
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [treeId, setTreeId] = useState<string | null>(null);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [viewingPerson, setViewingPerson] = useState<Person | null>(null); // Add this
+
+
+
+
+  // Effect for loading data and handling auth
+  useEffect(() => {
+    const loadInitialData = async () => {
+      setLoading(true);
+
+      // Fetch the first available public tree
+      const { data: treeData, error: treeError } = await supabase
+        .from('family_trees')
+        .select('id, data, owner_id')
+        .limit(1) // Just get the first tree for this app
+        .single();
+
+      const { data: { session } } = await supabase.auth.getSession();
+      setSession(session);
+
+      if (treeData) {
+        setTree(treeData.data);
+        setTreeId(treeData.id);
+        setOwnerId(treeData.owner_id);
+        setIsOwner(!!(session && session.user.id === treeData.owner_id));
+        const firstPersonId = Object.keys(treeData.data.persons)[0];
+        if (firstPersonId) {
+          setFocusId(firstPersonId);
+        }
+      } else if (session) {
+        // No tree exists, but a user is logged in. Let's create one.
+        const newPersonId = generateId();
+        const newTree: FamilyTree = {
+          persons: { [newPersonId]: { id: newPersonId, name: 'Root Ancestor', gender: 'male', birthYear: 1950 } },
+          marriages: {},
+          children: []
+        };
+        setTree(newTree);
+        setFocusId(newPersonId);
+        setOwnerId(session.user.id);
+        setIsOwner(true);
+
+        const { data: newTreeData, error: insertError } = await supabase
+          .from('family_trees')
+          .insert({ owner_id: session.user.id, data: newTree })
+          .select('id')
+          .single();
+
+        if (insertError) {
+          console.error("Error creating initial tree:", insertError);
+        } else if (newTreeData) {
+          setTreeId(newTreeData.id);
+        }
+      }
+
+      if (treeError && treeError.code !== 'PGRST116') {
+        console.error('Error loading tree:', treeError);
+      }
+      setLoading(false);
+    };
+
+    loadInitialData();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setIsOwner(!!(session && ownerId && session.user.id === ownerId));
+      if (session) { // Close login modal on successful login
+        setShowLoginModal(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [ownerId]); // Dependency on ownerId
+
+  // Effect for saving data on change
+  useEffect(() => {
+    // Note the addition of isOwner to the condition
+    if (loading || !isOwner || !treeId) return;
+
+    const saveTree = async () => {
+      const { error } = await supabase
+        .from('family_trees')
+        .update({ data: tree })
+        .eq('id', treeId);
+
+      if (error) {
+        console.error('Error saving tree:', error);
+      }
+    };
+
+    const debounceSave = setTimeout(() => {
+      saveTree();
+    }, 1000);
+
+    return () => clearTimeout(debounceSave);
+  }, [tree, isOwner, treeId, loading]); // Add isOwner to dependency array
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+
   const svgRef = useRef<SVGSVGElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
 
   const focusedPerson = focusId ? tree.persons[focusId] : null;
 
+
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase();
-    return Object.values(tree.persons).filter(p => 
+    return Object.values(tree.persons).filter(p =>
       p.name.toLowerCase().includes(q)
     ).slice(0, 10);
   }, [tree.persons, searchQuery]);
@@ -248,7 +369,7 @@ const App = () => {
     // We use the first key available to ensure a consistent generation structure.
     const rootId = Object.keys(tree.persons)[0];
     const gens = computeGenerations(tree, rootId);
-    
+
     const personCoords: Record<string, { x: number; y: number }> = {};
     const marriageCoords: Record<string, { x: number; y: number }> = {};
     const peopleByGen: Record<number, string[]> = {};
@@ -362,6 +483,20 @@ const App = () => {
     setSearchQuery('');
   };
 
+
+  if (loading) {
+    return (
+      <div className="w-full h-screen flex justify-center items-center bg-slate-100">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-full animate-spin border-4 border-solid border-indigo-600 border-t-transparent"></div>
+          <p className="text-slate-500 font-semibold">Loading Your Family Tree...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // The entire existing `return (...)` statement of your App component goes here.
+  // For example:
   return (
     <div className="flex flex-col h-screen bg-slate-50 overflow-hidden font-sans select-none">
       <header className="flex items-center justify-between px-10 py-5 bg-white border-b border-slate-200 shadow-sm z-10">
@@ -374,26 +509,38 @@ const App = () => {
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">The Sinha Family Tree</p>
           </div>
         </div>
+        <div>
+          {session ? (
+            <button onClick={() => supabase.auth.signOut()} className="px-5 py-2.5 text-sm font-bold text-rose-600 bg-white border border-rose-200 rounded-2xl hover:bg-rose-50 hover:border-rose-300 flex items-center gap-2 transition-all">
+              Sign Out
+            </button>
+          ) : (
+            <button onClick={() => setShowLoginModal(true)} className="px-5 py-2.5 text-sm font-bold text-indigo-600 bg-white border border-indigo-200 rounded-2xl hover:bg-indigo-50 hover:border-indigo-300 flex items-center gap-2 transition-all">
+              Sign In
+            </button>
+          )}
+        </div>
+
 
         {/* Search Bar Component */}
         <div className="relative flex-1 max-w-md mx-8" ref={searchRef}>
           <div className="relative group">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
-            <input 
-              type="text" 
-              placeholder="Find a family member..." 
+            <input
+              type="text"
+              placeholder="Find a family member..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-12 pr-4 py-3 bg-slate-100 border-none rounded-2xl font-bold text-slate-700 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all outline-none"
             />
           </div>
-          
+
           {/* Search Dropdown */}
           {searchResults.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
               <div className="p-2">
                 {searchResults.map(p => (
-                  <button 
+                  <button
                     key={p.id}
                     onClick={() => handleSelectPerson(p.id)}
                     className="w-full text-left px-4 py-3 rounded-xl hover:bg-slate-50 flex items-center justify-between group transition-colors"
@@ -416,7 +563,7 @@ const App = () => {
             </div>
           )}
         </div>
-        
+
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-4 pr-6 border-r border-slate-200">
             {focusedPerson ? (
@@ -425,12 +572,15 @@ const App = () => {
                   <div className="text-sm font-black text-slate-700">{focusedPerson.name}</div>
                   <div className="text-[10px] text-indigo-500 font-bold uppercase tracking-widest">Selected Focus</div>
                 </div>
-                <button 
-                  onClick={() => setEditingPerson(focusedPerson)}
-                  className="px-5 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-2xl text-sm font-bold flex items-center gap-2 transition-all shadow-xl shadow-indigo-200 active:scale-95"
-                >
-                  <Edit2 size={16} /> Edit Profile
-                </button>
+                {isOwner && (
+                  <button
+                    onClick={() => setEditingPerson(focusedPerson)}
+                    className="px-5 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-2xl text-sm font-bold flex items-center gap-2 transition-all shadow-xl shadow-indigo-200 active:scale-95"
+                  >
+                    <Edit2 size={16} /> Edit Profile
+                  </button>
+                )}
+
               </>
             ) : (
               <div className="flex items-center gap-2 text-slate-400">
@@ -439,25 +589,30 @@ const App = () => {
               </div>
             )}
           </div>
-          
+
           <div className="flex items-center gap-2">
-            <button onClick={() => document.getElementById('import-input')?.click()} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 flex items-center gap-2 transition-all"><Upload size={16} /> Import</button>
-            <input id="import-input" type="file" className="hidden" onChange={handleImport} />
-            <button onClick={handleExport} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 flex items-center gap-2 transition-all"><Download size={16} /> Export</button>
+            {isOwner && (
+              <>
+                <button onClick={() => document.getElementById('import-input')?.click()} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 flex items-center gap-2 transition-all"><Upload size={16} /> Import</button>
+                <input id="import-input" type="file" className="hidden" onChange={handleImport} />
+                <button onClick={handleExport} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 flex items-center gap-2 transition-all"><Download size={16} /> Export</button>
+              </>
+            )}
+
             <button onClick={() => setViewBox({ x: -500, y: -250, w: 1000, h: 800 })} className="p-2.5 text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-all"><Maximize2 size={22} /></button>
           </div>
         </div>
       </header>
 
       <main className="flex-1 relative cursor-grab active:cursor-grabbing bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:32px_32px]">
-        <svg 
-          ref={svgRef} 
-          className="w-full h-full" 
-          viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`} 
-          onMouseDown={handleMouseDown} 
-          onMouseMove={handleMouseMove} 
-          onMouseUp={handleMouseUp} 
-          onMouseLeave={handleMouseUp} 
+        <svg
+          ref={svgRef}
+          className="w-full h-full"
+          viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
         >
           <defs>
@@ -467,10 +622,10 @@ const App = () => {
           </defs>
 
           {/* GIANT BACKGROUND RECTANGLE FOR DESELECTION */}
-          <rect 
-            x="-20000" y="-20000" width="40000" height="40000" 
-            fill="transparent" 
-            pointerEvents="all" 
+          <rect
+            x="-20000" y="-20000" width="40000" height="40000"
+            fill="transparent"
+            pointerEvents="all"
             onClick={() => setFocusId(null)}
           />
 
@@ -480,12 +635,12 @@ const App = () => {
             if (!m || !p) return null;
             const midY = m.y + (p.y - m.y) / 2;
             return (
-              <path 
-                key={`link-${idx}`} 
-                d={`M ${m.x} ${m.y} L ${m.x} ${midY} L ${p.x} ${midY} L ${p.x} ${p.y - NODE_HEIGHT / 2}`} 
-                fill="none" 
-                stroke="#94a3b8" 
-                strokeWidth="2.5" 
+              <path
+                key={`link-${idx}`}
+                d={`M ${m.x} ${m.y} L ${m.x} ${midY} L ${p.x} ${midY} L ${p.x} ${p.y - NODE_HEIGHT / 2}`}
+                fill="none"
+                stroke="#94a3b8"
+                strokeWidth="2.5"
                 strokeDasharray="8 6"
                 strokeLinecap="round"
                 pointerEvents="none"
@@ -501,19 +656,23 @@ const App = () => {
           })}
 
           {/* Marriage Interaction Nodes */}
+          {/* Marriage Interaction Nodes */}
           {(Object.values(tree.marriages) as Marriage[]).map((m) => {
             const coord = layout.marriageCoords[m.id];
             if (!coord) return null;
             return (
               <g key={`m-node-${m.id}`} transform={`translate(${coord.x}, ${coord.y})`}>
                 <circle r={MARRIAGE_CIRCLE_RADIUS} fill="white" stroke="#64748b" strokeWidth="2.5" className="transition-all shadow-sm" />
-                <g transform="translate(20, -20)" onClick={(e) => { e.stopPropagation(); setAddingChildToMarriageId(m.id); }} className="cursor-pointer group">
-                  <circle r="14" fill="#6366f1" className="group-hover:fill-indigo-700 transition-colors shadow-lg" />
-                  <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
-                </g>
+                {isOwner && (
+                  <g transform="translate(20, -20)" onClick={(e) => { e.stopPropagation(); setAddingChildToMarriageId(m.id); }} className="cursor-pointer group">
+                    <circle r="14" fill="#6366f1" className="group-hover:fill-indigo-700 transition-colors shadow-lg" />
+                    <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
+                  </g>
+                )}
               </g>
             );
           })}
+
 
           {/* Person Nodes */}
           {(Object.values(tree.persons) as Person[]).map((p) => {
@@ -521,32 +680,32 @@ const App = () => {
             if (!coord) return null;
             const isFocus = p.id === focusId;
             return (
-              <g 
-                key={`p-node-${p.id}`} 
-                transform={`translate(${coord.x}, ${coord.y})`} 
+              <g
+                key={`p-node-${p.id}`}
+                transform={`translate(${coord.x}, ${coord.y})`}
                 filter="url(#nodeShadow)"
                 className="cursor-pointer group"
                 onClick={(e) => { e.stopPropagation(); setFocusId(p.id); }}
               >
                 {/* Main Card Body */}
-                <rect 
-                  x={-NODE_WIDTH / 2} 
-                  y={-NODE_HEIGHT / 2} 
-                  width={NODE_WIDTH} 
-                  height={NODE_HEIGHT} 
-                  rx="24" 
-                  className={`transition-all duration-300 ${isFocus ? 'stroke-indigo-600 stroke-[3px]' : 'stroke-slate-200 stroke-[1px]'} ${p.external ? 'opacity-80' : ''} hover:stroke-indigo-300`} 
-                  fill={p.gender === 'male' ? 'url(#maleGrad)' : 'url(#femaleGrad)'} 
+                <rect
+                  x={-NODE_WIDTH / 2}
+                  y={-NODE_HEIGHT / 2}
+                  width={NODE_WIDTH}
+                  height={NODE_HEIGHT}
+                  rx="24"
+                  className={`transition-all duration-300 ${isFocus ? 'stroke-indigo-600 stroke-[3px]' : 'stroke-slate-200 stroke-[1px]'} ${p.external ? 'opacity-80' : ''} hover:stroke-indigo-300`}
+                  fill={p.gender === 'male' ? 'url(#maleGrad)' : 'url(#femaleGrad)'}
                 />
-                
+
                 {/* Gender Indicator Badge */}
-                <g transform={`translate(${-NODE_WIDTH/2 + 30}, 0)`}>
+                <g transform={`translate(${-NODE_WIDTH / 2 + 30}, 0)`}>
                   <circle r="18" fill={p.gender === 'male' ? '#3b82f6' : '#ec4899'} fillOpacity="0.08" />
                   <text textAnchor="middle" dominantBaseline="central" fontSize="11" fill={p.gender === 'male' ? '#2563eb' : '#db2777'} fontWeight="black" pointerEvents="none">
                     {p.gender === 'male' ? 'M' : 'F'}
                   </text>
                 </g>
-                
+
                 {/* Name and Dates */}
                 <text textAnchor="middle" className="fill-slate-800 font-black text-[15px] tracking-tight" y={-5} x={15}>{p.name}</text>
                 {(p.birthYear || p.deathYear) && (
@@ -555,35 +714,50 @@ const App = () => {
                   </text>
                 )}
 
-                {/* ACTION BUTTONS: Docked at specific coordinates */}
-                <g className={`${isFocus ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity duration-200`}>
-                  
-                  {/* Edit Profile - Top Right Anchor */}
-                  <g transform={`translate(${NODE_WIDTH / 2 - 12}, ${-NODE_HEIGHT / 2 + 12})`} 
-                     onClick={(e) => { e.stopPropagation(); setEditingPerson(p); }} 
-                     className="cursor-pointer">
-                    <circle r={14} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="hover:fill-indigo-50 transition-colors shadow-sm" />
-                    <text textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#6366f1" fontWeight="black" pointerEvents="none">✎</text>
-                  </g>
-                  
-                  {/* Add Spouse - Bottom Anchor */}
-                  <g transform={`translate(0, ${NODE_HEIGHT / 2})`} 
-                     onClick={(e) => { e.stopPropagation(); setAddingSpouseToPersonId(p.id); }} 
-                     className="cursor-pointer">
-                    <circle r={BUTTON_RADIUS} fill="#10b981" className="hover:fill-emerald-700 transition-colors shadow-md" />
-                    <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
-                  </g>
+                {/* // Add this code around line 765 */}
 
-                  {/* Add Parents - Top Anchor */}
-                  {getParentsOfPerson(tree, p.id).length === 0 && (
-                    <g transform={`translate(0, ${-NODE_HEIGHT / 2})`} 
-                       onClick={(e) => { e.stopPropagation(); setAddingParentToPersonId(p.id); }} 
-                       className="cursor-pointer">
-                      <circle r={BUTTON_RADIUS} fill="#3b82f6" className="hover:fill-blue-700 transition-colors shadow-md" />
-                      <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
-                    </g>
-                  )}
+                {/* View Profile Button - Top Left */}
+                <g
+                  transform={`translate(${-NODE_WIDTH / 2 + 12}, ${-NODE_HEIGHT / 2 + 12})`}
+                  onClick={(e) => { e.stopPropagation(); setViewingPerson(p); }}
+                  className="cursor-pointer group/view opacity-0 group-hover:opacity-100 transition-opacity">
+                  <circle r={14} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="group-hover/view:fill-slate-50 transition-colors shadow-sm" />
+                  <Eye size={14} strokeWidth={2.5} className="text-slate-500 group-hover/view:text-slate-700 transition-colors" style={{ transform: 'translate(-7px, -7px)' }} />
                 </g>
+
+
+                {/* ACTION BUTTONS: Docked at specific coordinates */}
+                {isOwner && (
+                  <g className={`${isFocus ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity duration-200`}>
+
+                    {/* Edit Profile - Top Right Anchor */}
+                    {isOwner && (
+                      <g transform={`translate(${NODE_WIDTH / 2 - 12}, ${-NODE_HEIGHT / 2 + 12})`}
+                        onClick={(e) => { e.stopPropagation(); setEditingPerson(p); }}
+                        className="cursor-pointer">
+                        <circle r={14} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="hover:fill-indigo-50 transition-colors shadow-sm" />
+                        <text textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#6366f1" fontWeight="black" pointerEvents="none">✎</text>
+                      </g>)}
+
+                    {/* Add Spouse - Bottom Anchor */}
+                    {isOwner && (
+                      <g transform={`translate(0, ${NODE_HEIGHT / 2})`}
+                        onClick={(e) => { e.stopPropagation(); setAddingSpouseToPersonId(p.id); }}
+                        className="cursor-pointer">
+                        <circle r={BUTTON_RADIUS} fill="#10b981" className="hover:fill-emerald-700 transition-colors shadow-md" />
+                        <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
+                      </g>)}
+
+                    {/* Add Parents - Top Anchor */}
+                    {getParentsOfPerson(tree, p.id).length === 0 && (
+                      <g transform={`translate(0, ${-NODE_HEIGHT / 2})`}
+                        onClick={(e) => { e.stopPropagation(); setAddingParentToPersonId(p.id); }}
+                        className="cursor-pointer">
+                        <circle r={BUTTON_RADIUS} fill="#3b82f6" className="hover:fill-blue-700 transition-colors shadow-md" />
+                        <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
+                      </g>
+                    )}
+                  </g>)}
               </g>
             );
           })}
@@ -604,7 +778,9 @@ const App = () => {
               gender: fd.get('gender') as Gender,
               birthYear: birthRaw ? parseInt(birthRaw, 10) : undefined,
               deathYear: deathRaw ? parseInt(deathRaw, 10) : undefined,
-              notes: fd.get('notes') as string
+              notes: fd.get('notes') as string,
+              phone: fd.get('phone') as string, // Add this
+              email: fd.get('email') as string  // Add this
             };
             setTree(prev => updatePerson(prev, updated));
             setEditingPerson(null);
@@ -638,6 +814,17 @@ const App = () => {
                   </div>
                 </div>
               </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Phone size={14} /> Phone Number</label>
+                  <input name="phone" type="tel" defaultValue={editingPerson.phone} placeholder="e.g. 555-123-4567" className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 outline-none transition-all font-bold text-slate-800" />
+                </div>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Mail size={14} /> Email Address</label>
+                  <input name="email" type="email" defaultValue={editingPerson.email} placeholder="e.g. john.smith@email.com" className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 outline-none transition-all font-bold text-slate-800" />
+                </div>
+              </div>
+
 
               <div className="space-y-3">
                 <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><FileText size={14} /> Biographical Documentation</label>
@@ -650,17 +837,85 @@ const App = () => {
                 <button type="button" onClick={() => setEditingPerson(null)} className="flex-1 py-4 font-bold text-slate-500 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-all active:scale-95">Cancel</button>
                 <button type="submit" className="flex-[2] py-4 font-black text-white bg-indigo-600 rounded-2xl hover:bg-indigo-700 shadow-2xl shadow-indigo-100 hover:-translate-y-0.5 transition-all active:translate-y-0">Save Identity Update</button>
               </div>
-              <button 
-                type="button" 
-                onClick={() => handleDelete(editingPerson.id)}
-                className="w-full py-4 text-rose-500 font-bold hover:bg-rose-50 rounded-2xl flex items-center justify-center gap-2 transition-all group"
-              >
-                <Trash2 size={16} className="group-hover:animate-pulse" /> Irrevocably Delete Profile
-              </button>
+              {isOwner && (
+                <button
+                  type="button"
+                  onClick={() => handleDelete(editingPerson.id)}
+                  className="w-full py-4 text-rose-500 font-bold hover:bg-rose-50 rounded-2xl flex items-center justify-center gap-2 transition-all group"
+                >
+                  <Trash2 size={16} className="group-hover:animate-pulse" /> Irrevocably Delete Profile
+                </button>)}
             </div>
           </form>
         )}
       </Modal>
+
+      {/* View Person Modal */}
+      <Modal isOpen={!!viewingPerson} onClose={() => setViewingPerson(null)} title="View Identity">
+        {viewingPerson && (
+          <div className="space-y-8">
+            <div className="space-y-6">
+              {/* Name */}
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><User size={14} /> Official Name</label>
+                <p className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800">{viewingPerson.name}</p>
+              </div>
+
+              {/* Gender and Lifespan */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Venus size={14} /> Gender</label>
+                  <p className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 capitalize">{viewingPerson.gender}</p>
+                </div>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Calendar size={14} /> Lifespan</label>
+                  <p className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800">
+                    {viewingPerson.birthYear || 'Unknown'} - {viewingPerson.deathYear || 'Present'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Phone and Email with Conditional Blur */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
+                {!session && (viewingPerson.phone || viewingPerson.email) && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-[2px] rounded-2xl">
+                    <button onClick={() => { setViewingPerson(null); setShowLoginModal(true); }} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-lg">
+                      Sign In to View Contact Info
+                    </button>
+                  </div>
+                )}
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Phone size={14} /> Phone</label>
+                  <p className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 min-h-[58px]">
+                    {viewingPerson.phone || <span className="text-slate-400 font-medium">Not Available</span>}
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Mail size={14} /> Email</label>
+                  <p className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 min-h-[58px]">
+                    {viewingPerson.email || <span className="text-slate-400 font-medium">Not Available</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><FileText size={14} /> Biographical Notes</label>
+                <p className="w-full px-6 py-5 bg-slate-50 border border-slate-200 rounded-2xl min-h-[140px] font-medium text-slate-600 leading-relaxed custom-scrollbar">
+                  {viewingPerson.notes || <span className="text-slate-400">No notes available.</span>}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-4 pt-8 border-t border-slate-100">
+              <button type="button" onClick={() => setViewingPerson(null)} className="w-full py-4 font-bold text-slate-500 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-all active:scale-95">Close</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Add Spouse Modal */}
+
 
       {/* Add Spouse Modal */}
       <Modal isOpen={!!addingSpouseToPersonId} onClose={() => setAddingSpouseToPersonId(null)} title="New Marriage Entry">
@@ -736,33 +991,44 @@ const App = () => {
       </Modal>
 
       <style>{`
-        .animate-spin-slow {
-          animation: spin 12s linear infinite;
-        }
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: #f1f5f9;
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #cbd5e1;
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #94a3b8;
-        }
-        .ease-out-back {
-          transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-      `}</style>
+          .animate-spin-slow {
+            animation: spin 12s linear infinite;
+          }
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+          .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 10px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+          }
+          .ease-out-back {
+            transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+          }
+        `}</style>
+      <Modal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} title="Sign In">
+        <div className="max-w-md w-full p-4">
+          <p className="text-slate-500 text-center mb-8">Sign in to suggest edits or manage your family tree.</p>
+          <Login />
+        </div>
+      </Modal>
+
     </div>
+
   );
+
+
+
 };
 
 const container = document.getElementById('root');
