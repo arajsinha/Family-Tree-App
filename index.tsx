@@ -878,7 +878,7 @@ const App = () => {
               {/* Phone and Email with Conditional Blur */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
                 {!session && (viewingPerson.phone || viewingPerson.email) && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-[2px] rounded-2xl">
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-[3.5px] rounded-2xl">
                     <button onClick={() => { setViewingPerson(null); setShowLoginModal(true); }} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-lg">
                       Sign In to View Contact Info
                     </button>
