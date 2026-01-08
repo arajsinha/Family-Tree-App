@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { 
   Plus, 
@@ -16,7 +16,8 @@ import {
   X, 
   Venus, 
   Mars,
-  Info
+  Info,
+  Search
 } from 'lucide-react';
 
 // --- Data Models ---
@@ -215,12 +216,39 @@ const App = () => {
   const [addingSpouseToPersonId, setAddingSpouseToPersonId] = useState<string | null>(null);
   const [addingParentToPersonId, setAddingParentToPersonId] = useState<string | null>(null);
   const [viewBox, setViewBox] = useState({ x: -500, y: -250, w: 1000, h: 800 });
+  const [searchQuery, setSearchQuery] = useState('');
+  
   const svgRef = useRef<SVGSVGElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
+
   const focusedPerson = focusId ? tree.persons[focusId] : null;
 
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return Object.values(tree.persons).filter(p => 
+      p.name.toLowerCase().includes(q)
+    ).slice(0, 10);
+  }, [tree.persons, searchQuery]);
+
+  // Handle click outside search results
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setSearchQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Layout calculation is now independent of focusId to prevent shifting nodes on click.
   const layout = useMemo(() => {
-    const startId = focusId || Object.keys(tree.persons)[0];
-    const gens = computeGenerations(tree, startId);
+    // Pick a stable root from the tree persons. 
+    // We use the first key available to ensure a consistent generation structure.
+    const rootId = Object.keys(tree.persons)[0];
+    const gens = computeGenerations(tree, rootId);
+    
     const personCoords: Record<string, { x: number; y: number }> = {};
     const marriageCoords: Record<string, { x: number; y: number }> = {};
     const peopleByGen: Record<number, string[]> = {};
@@ -262,7 +290,7 @@ const App = () => {
     });
 
     return { personCoords, marriageCoords, gens };
-  }, [tree, focusId]);
+  }, [tree]); // Only depend on tree data, not focusId
 
   const handleExport = () => {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(tree));
@@ -329,6 +357,11 @@ const App = () => {
     }
   };
 
+  const handleSelectPerson = (id: string) => {
+    setFocusId(id);
+    setSearchQuery('');
+  };
+
   return (
     <div className="flex flex-col h-screen bg-slate-50 overflow-hidden font-sans select-none">
       <header className="flex items-center justify-between px-10 py-5 bg-white border-b border-slate-200 shadow-sm z-10">
@@ -336,10 +369,52 @@ const App = () => {
           <div className="bg-indigo-600 p-2.5 rounded-2xl text-white shadow-lg shadow-indigo-100">
             <Users size={26} strokeWidth={2.5} />
           </div>
-          <div>
+          <div className="hidden lg:block">
             <h1 className="text-2xl font-black text-slate-800 tracking-tight leading-none mb-1">The Sinha's</h1>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">The Sinha Family Tree</p>
           </div>
+        </div>
+
+        {/* Search Bar Component */}
+        <div className="relative flex-1 max-w-md mx-8" ref={searchRef}>
+          <div className="relative group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+            <input 
+              type="text" 
+              placeholder="Find a family member..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 bg-slate-100 border-none rounded-2xl font-bold text-slate-700 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all outline-none"
+            />
+          </div>
+          
+          {/* Search Dropdown */}
+          {searchResults.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
+              <div className="p-2">
+                {searchResults.map(p => (
+                  <button 
+                    key={p.id}
+                    onClick={() => handleSelectPerson(p.id)}
+                    className="w-full text-left px-4 py-3 rounded-xl hover:bg-slate-50 flex items-center justify-between group transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black ${p.gender === 'male' ? 'bg-blue-100 text-blue-600' : 'bg-pink-100 text-pink-600'}`}>
+                        {p.gender === 'male' ? 'M' : 'F'}
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-slate-700">{p.name}</div>
+                        {p.birthYear && <div className="text-[10px] text-slate-400 font-bold">Born {p.birthYear}</div>}
+                      </div>
+                    </div>
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="px-2 py-1 bg-indigo-50 text-indigo-600 rounded text-[10px] font-black uppercase tracking-widest">Focus</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-6">
@@ -453,7 +528,7 @@ const App = () => {
                 className="cursor-pointer group"
                 onClick={(e) => { e.stopPropagation(); setFocusId(p.id); }}
               >
-                {/* Main Card Body - Removed scale on hover to fix floating buttons jitter */}
+                {/* Main Card Body */}
                 <rect 
                   x={-NODE_WIDTH / 2} 
                   y={-NODE_HEIGHT / 2} 
