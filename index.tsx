@@ -24,7 +24,8 @@ import {
   Search,
   Mail,  // Add this
   Phone,  // Add this
-  Eye // Add this
+  Eye, // Add this
+  MessageSquarePlus // Add this
 } from 'lucide-react';
 
 // --- Data Models ---
@@ -96,6 +97,7 @@ const addChild = (tree: FamilyTree, marriageId: string, personId: string): Famil
     children: [...tree.children, { marriageId, personId }],
   };
 };
+
 
 const deletePerson = (tree: FamilyTree, personId: string): FamilyTree => {
   const newPersons = { ...tree.persons };
@@ -178,6 +180,7 @@ const computeGenerations = (tree: FamilyTree, startId: string): Record<string, n
   return generations;
 };
 
+
 const generateId = () => Math.random().toString(36).substring(2, 11);
 
 // --- Components ---
@@ -194,7 +197,7 @@ const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md transition-all duration-300 animate-in fade-in">
       <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 animate-in zoom-in duration-300 ease-out-back">
-        <div className="px-10 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+        <div className="px-6 sm:px-10 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-100 rounded-xl text-indigo-600">
               <Info size={20} />
@@ -205,8 +208,9 @@ const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
             <X size={24} />
           </button>
         </div>
-        <div className="p-10 overflow-y-auto max-h-[85vh] custom-scrollbar">{children}</div>
+        <div className="p-6 sm:p-10 overflow-y-auto max-h-[85vh] custom-scrollbar">{children}</div>
       </div>
+
     </div>
   );
 };
@@ -227,6 +231,7 @@ const App = () => {
   const [isOwner, setIsOwner] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [viewingPerson, setViewingPerson] = useState<Person | null>(null); // Add this
+  const [suggestingPerson, setSuggestingPerson] = useState<Person | null>(null); // Add this
 
 
 
@@ -340,6 +345,8 @@ const App = () => {
 
   const svgRef = useRef<SVGSVGElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  const initialPinchDistance = useRef(0); // For touch zoom
+
 
   const focusedPerson = focusId ? tree.persons[focusId] : null;
 
@@ -470,6 +477,55 @@ const App = () => {
     });
   };
 
+  const getDistance = (touches: React.TouchList) => {
+    return Math.sqrt(
+      Math.pow(touches[0].clientX - touches[1].clientX, 2) +
+      Math.pow(touches[0].clientY - touches[1].clientY, 2)
+    );
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      e.preventDefault(); // Prevent default browser zoom/pan
+      initialPinchDistance.current = getDistance(e.touches);
+      setIsPanning(false);
+    } else if (e.touches.length === 1) {
+      setIsPanning(true);
+      startPan.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    e.preventDefault(); // Prevent scrolling the page
+    if (e.touches.length === 2) {
+      const newDist = getDistance(e.touches);
+      if (initialPinchDistance.current > 0) {
+        const scale = newDist / initialPinchDistance.current;
+        setViewBox(prev => {
+          const newW = prev.w / scale;
+          const newH = prev.h / scale;
+          return { ...prev, x: prev.x + (prev.w - newW) / 2, y: prev.y + (prev.h - newH) / 2, w: newW, h: newH };
+        });
+      }
+      initialPinchDistance.current = newDist;
+    } else if (isPanning && e.touches.length === 1) {
+      const dx = e.touches[0].clientX - startPan.current.x;
+      const dy = e.touches[0].clientY - startPan.current.y;
+      setViewBox(prev => ({
+        ...prev,
+        x: prev.x - dx * (prev.w / (svgRef.current?.clientWidth || 1)),
+        y: prev.y - dy * (prev.h / (svgRef.current?.clientHeight || 1))
+      }));
+      startPan.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsPanning(false);
+    initialPinchDistance.current = 0;
+  };
+
+
   const handleDelete = (id: string) => {
     if (confirm("Are you sure you want to remove this person and their relationships?")) {
       setTree(prev => deletePerson(prev, id));
@@ -499,31 +555,20 @@ const App = () => {
   // For example:
   return (
     <div className="flex flex-col h-screen bg-slate-50 overflow-hidden font-sans select-none">
-      <header className="flex items-center justify-between px-10 py-5 bg-white border-b border-slate-200 shadow-sm z-10">
+      <header className="flex flex-wrap items-center justify-between gap-y-4 gap-x-6 px-4 py-4 sm:px-6 lg:px-8 bg-white border-b border-slate-200 shadow-sm z-10">
+        {/* Logo and Title */}
         <div className="flex items-center gap-4">
           <div className="bg-indigo-600 p-2.5 rounded-2xl text-white shadow-lg shadow-indigo-100">
             <Users size={26} strokeWidth={2.5} />
           </div>
-          <div className="hidden lg:block">
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight leading-none mb-1">The Sinha's</h1>
+          <div className="hidden sm:block">
+            <h1 className="text-xl font-black text-slate-800 tracking-tight leading-none mb-1">The Sinha's</h1>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">The Sinha Family Tree</p>
           </div>
         </div>
-        <div>
-          {session ? (
-            <button onClick={() => supabase.auth.signOut()} className="px-5 py-2.5 text-sm font-bold text-rose-600 bg-white border border-rose-200 rounded-2xl hover:bg-rose-50 hover:border-rose-300 flex items-center gap-2 transition-all">
-              Sign Out
-            </button>
-          ) : (
-            <button onClick={() => setShowLoginModal(true)} className="px-5 py-2.5 text-sm font-bold text-indigo-600 bg-white border border-indigo-200 rounded-2xl hover:bg-indigo-50 hover:border-indigo-300 flex items-center gap-2 transition-all">
-              Sign In
-            </button>
-          )}
-        </div>
 
-
-        {/* Search Bar Component */}
-        <div className="relative flex-1 max-w-md mx-8" ref={searchRef}>
+        {/* Search Bar (Full width on mobile) */}
+        <div className="relative w-full md:w-auto md:flex-1 md:max-w-md order-3 md:order-2" ref={searchRef}>
           <div className="relative group">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
             <input
@@ -534,8 +579,6 @@ const App = () => {
               className="w-full pl-12 pr-4 py-3 bg-slate-100 border-none rounded-2xl font-bold text-slate-700 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all outline-none"
             />
           </div>
-
-          {/* Search Dropdown */}
           {searchResults.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
               <div className="p-2">
@@ -564,45 +607,50 @@ const App = () => {
           )}
         </div>
 
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4 pr-6 border-r border-slate-200">
+        {/* Actions & Auth */}
+        <div className="flex items-center gap-2 sm:gap-4 order-2 md:order-3">
+          <div className="hidden md:flex items-center gap-4 pr-4 sm:border-r border-slate-200">
             {focusedPerson ? (
               <>
-                <div className="text-right hidden sm:block">
+                <div className="text-right">
                   <div className="text-sm font-black text-slate-700">{focusedPerson.name}</div>
                   <div className="text-[10px] text-indigo-500 font-bold uppercase tracking-widest">Selected Focus</div>
                 </div>
-                {isOwner && (
-                  <button
-                    onClick={() => setEditingPerson(focusedPerson)}
-                    className="px-5 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-2xl text-sm font-bold flex items-center gap-2 transition-all shadow-xl shadow-indigo-200 active:scale-95"
-                  >
-                    <Edit2 size={16} /> Edit Profile
-                  </button>
+                {session && focusedPerson && (
+                  isOwner ? (
+                    <button onClick={() => setEditingPerson(focusedPerson)} className="px-4 py-2 sm:px-5 sm:py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-2xl text-sm font-bold flex items-center gap-2 transition-all shadow-xl shadow-indigo-200 active:scale-95">
+                      <Edit2 size={16} /> <span className="hidden sm:inline">Edit</span>
+                    </button>
+                  ) : (
+                    <button onClick={() => setSuggestingPerson(focusedPerson)} className="px-4 py-2 sm:px-5 sm:py-2.5 bg-amber-500 text-white hover:bg-amber-600 rounded-2xl text-sm font-bold flex items-center gap-2 transition-all shadow-xl shadow-amber-200 active:scale-95">
+                      <MessageSquarePlus size={16} /> <span className="hidden sm:inline">Suggest</span>
+                    </button>
+                  )
                 )}
-
               </>
             ) : (
               <div className="flex items-center gap-2 text-slate-400">
                 <Globe size={18} className="animate-spin-slow" />
-                <span className="text-[11px] font-black uppercase tracking-[0.1em]">Global Viewport</span>
+                <span className="text-[11px] font-black uppercase tracking-[0.1em] hidden lg:inline">Global View</span>
               </div>
             )}
           </div>
 
           <div className="flex items-center gap-2">
-            {isOwner && (
-              <>
-                <button onClick={() => document.getElementById('import-input')?.click()} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 flex items-center gap-2 transition-all"><Upload size={16} /> Import</button>
-                <input id="import-input" type="file" className="hidden" onChange={handleImport} />
-                <button onClick={handleExport} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-slate-300 flex items-center gap-2 transition-all"><Download size={16} /> Export</button>
-              </>
+            {session ? (
+              <button onClick={() => supabase.auth.signOut()} className="px-4 py-2 text-sm font-bold text-rose-600 bg-white border border-rose-200 rounded-2xl hover:bg-rose-50 hover:border-rose-300 flex items-center gap-2 transition-all">
+                Sign Out
+              </button>
+            ) : (
+              <button onClick={() => setShowLoginModal(true)} className="px-4 py-2 text-sm font-bold text-indigo-600 bg-white border border-indigo-200 rounded-2xl hover:bg-indigo-50 hover:border-indigo-300 flex items-center gap-2 transition-all">
+                Sign In
+              </button>
             )}
-
             <button onClick={() => setViewBox({ x: -500, y: -250, w: 1000, h: 800 })} className="p-2.5 text-slate-600 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-all"><Maximize2 size={22} /></button>
           </div>
         </div>
       </header>
+
 
       <main className="flex-1 relative cursor-grab active:cursor-grabbing bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:32px_32px]">
         <svg
@@ -614,7 +662,11 @@ const App = () => {
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         >
+
           <defs>
             <filter id="nodeShadow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceAlpha" stdDeviation="6" /><feOffset dx="0" dy="10" result="offsetblur" /><feComponentTransfer><feFuncA type="linear" slope="0.1" /></feComponentTransfer><feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge></filter>
             <linearGradient id="maleGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#ffffff" /><stop offset="100%" stopColor="#f0f9ff" /></linearGradient>
@@ -629,7 +681,7 @@ const App = () => {
             onClick={() => setFocusId(null)}
           />
 
-          {/* Lineage Paths (Dashed Orthogonal) */}
+          {/* Lineage Paths (Hanging Structure) */}
           {tree.children.map((link, idx) => {
             const m = layout.marriageCoords[link.marriageId], p = layout.personCoords[link.personId];
             if (!m || !p) return null;
@@ -716,48 +768,59 @@ const App = () => {
 
                 {/* // Add this code around line 765 */}
 
-                {/* View Profile Button - Top Left */}
+                {/* View Profile Button - Side Anchor */}
                 <g
-                  transform={`translate(${-NODE_WIDTH / 2 + 12}, ${-NODE_HEIGHT / 2 + 12})`}
+                  transform={`translate(${-NODE_WIDTH / 2 - 30}, 0)`}
                   onClick={(e) => { e.stopPropagation(); setViewingPerson(p); }}
                   className="cursor-pointer group/view opacity-0 group-hover:opacity-100 transition-opacity">
-                  <circle r={14} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="group-hover/view:fill-slate-50 transition-colors shadow-sm" />
-                  <Eye size={14} strokeWidth={2.5} className="text-slate-500 group-hover/view:text-slate-700 transition-colors" style={{ transform: 'translate(-7px, -7px)' }} />
+                  <circle r={18} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="group-hover/view:fill-slate-50 transition-colors shadow-md" />
+                  <Eye size={18} strokeWidth={2.5} className="text-slate-500 group-hover/view:text-slate-700 transition-colors" style={{ transform: 'translate(-9px, -9px)' }} />
                 </g>
 
 
-                {/* ACTION BUTTONS: Docked at specific coordinates */}
-                {isOwner && (
-                  <g className={`${isFocus ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity duration-200`}>
 
-                    {/* Edit Profile - Top Right Anchor */}
-                    {isOwner && (
+                {/* ACTION BUTTONS: Docked at specific coordinates */}
+                <g className={`${isFocus ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity duration-200`}>
+                  {isOwner ? (
+                    <>
+                      {/* Owner: Edit Profile - Top Right Anchor */}
                       <g transform={`translate(${NODE_WIDTH / 2 - 12}, ${-NODE_HEIGHT / 2 + 12})`}
                         onClick={(e) => { e.stopPropagation(); setEditingPerson(p); }}
-                        className="cursor-pointer">
-                        <circle r={14} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="hover:fill-indigo-50 transition-colors shadow-sm" />
-                        <text textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#6366f1" fontWeight="black" pointerEvents="none">✎</text>
-                      </g>)}
+                        className="cursor-pointer group/edit">
+                        <circle r={14} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="group-hover/edit:fill-indigo-50 transition-colors shadow-sm" />
+                        <Edit2 size={12} strokeWidth={2.5} className="text-indigo-600" style={{ transform: 'translate(-6px, -6px)' }} />
+                      </g>
 
-                    {/* Add Spouse - Bottom Anchor */}
-                    {isOwner && (
+                      {/* Owner: Add Spouse - Bottom Anchor */}
                       <g transform={`translate(0, ${NODE_HEIGHT / 2})`}
                         onClick={(e) => { e.stopPropagation(); setAddingSpouseToPersonId(p.id); }}
                         className="cursor-pointer">
                         <circle r={BUTTON_RADIUS} fill="#10b981" className="hover:fill-emerald-700 transition-colors shadow-md" />
                         <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
-                      </g>)}
-
-                    {/* Add Parents - Top Anchor */}
-                    {getParentsOfPerson(tree, p.id).length === 0 && (
-                      <g transform={`translate(0, ${-NODE_HEIGHT / 2})`}
-                        onClick={(e) => { e.stopPropagation(); setAddingParentToPersonId(p.id); }}
-                        className="cursor-pointer">
-                        <circle r={BUTTON_RADIUS} fill="#3b82f6" className="hover:fill-blue-700 transition-colors shadow-md" />
-                        <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
                       </g>
-                    )}
-                  </g>)}
+
+                      {/* Owner: Add Parents - Top Anchor */}
+                      {getParentsOfPerson(tree, p.id).length === 0 && (
+                        <g transform={`translate(0, ${-NODE_HEIGHT / 2})`}
+                          onClick={(e) => { e.stopPropagation(); setAddingParentToPersonId(p.id); }}
+                          className="cursor-pointer">
+                          <circle r={BUTTON_RADIUS} fill="#3b82f6" className="hover:fill-blue-700 transition-colors shadow-md" />
+                          <text textAnchor="middle" dominantBaseline="central" fill="white" fontSize="18" fontWeight="black" pointerEvents="none">+</text>
+                        </g>
+                      )}
+                    </>
+                  ) : session && (
+                    <>
+                      {/* Non-Owner: Suggest Edit - Top Right Anchor */}
+                      <g transform={`translate(${NODE_WIDTH / 2 - 12}, ${-NODE_HEIGHT / 2 + 12})`}
+                        onClick={(e) => { e.stopPropagation(); setSuggestingPerson(p); }}
+                        className="cursor-pointer group/suggest">
+                        <circle r={14} fill="white" stroke="#e2e8f0" strokeWidth="1.5" className="group-hover/suggest:fill-amber-50 transition-colors shadow-sm" />
+                        <MessageSquarePlus size={12} strokeWidth={2.5} className="text-amber-600" style={{ transform: 'translate(-6px, -6px)' }} />
+                      </g>
+                    </>
+                  )}
+                </g>
               </g>
             );
           })}
@@ -914,7 +977,106 @@ const App = () => {
         )}
       </Modal>
 
+      {/* Suggest Edit Modal */}
+      <Modal isOpen={!!suggestingPerson} onClose={() => setSuggestingPerson(null)} title="Suggest an Edit">
+        {suggestingPerson && (
+          <form className="space-y-8" onSubmit={async (e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const suggestedData: Partial<Person> = {};
+
+            // Compare and collect only changed data
+            const name = fd.get('name') as string;
+            if (name !== suggestingPerson.name) suggestedData.name = name;
+
+            const birthRaw = fd.get('birthYear') as string;
+            const birthYear = birthRaw ? parseInt(birthRaw, 10) : undefined;
+            if (birthYear !== suggestingPerson.birthYear) suggestedData.birthYear = birthYear;
+
+            const deathRaw = fd.get('deathYear') as string;
+            const deathYear = deathRaw ? parseInt(deathRaw, 10) : undefined;
+            if (deathYear !== suggestingPerson.deathYear) suggestedData.deathYear = deathYear;
+
+            const phone = fd.get('phone') as string;
+            if (phone !== suggestingPerson.phone) suggestedData.phone = phone;
+
+            const email = fd.get('email') as string;
+            if (email !== suggestingPerson.email) suggestedData.email = email;
+
+            const notes = fd.get('notes') as string;
+            if (notes !== suggestingPerson.notes) suggestedData.notes = notes;
+
+            if (Object.keys(suggestedData).length > 0) {
+              const { error } = await supabase.from('suggestions').insert({
+                tree_id: treeId,
+                person_id: suggestingPerson.id,
+                suggester_id: session!.user.id,
+                suggested_data: suggestedData,
+              });
+
+              if (error) {
+                alert('Error submitting suggestion: ' + error.message);
+              } else {
+                alert('Thank you! Your suggestion has been submitted for review.');
+              }
+            } else {
+              alert('No changes were made.');
+            }
+
+            setSuggestingPerson(null);
+          }}>
+            <div className="space-y-6">
+              <div className="p-4 bg-amber-50 border-l-4 border-amber-400 rounded-r-lg">
+                <p className="text-sm font-semibold text-amber-800">You are suggesting an edit for <span className="font-bold">{suggestingPerson.name}</span>. The tree owner will review your suggestion before it is published.</p>
+              </div>
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><User size={14} /> Official Name</label>
+                <input name="name" defaultValue={suggestingPerson.name} required className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-amber-500 focus:ring-4 focus:ring-amber-50 outline-none transition-all font-bold text-slate-800" />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Calendar size={14} /> Lifespan Years</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input name="birthYear" type="number" defaultValue={suggestingPerson.birthYear} placeholder="Born" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-amber-500 outline-none font-bold transition-all text-center" />
+                    <input name="deathYear" type="number" defaultValue={suggestingPerson.deathYear} placeholder="Died" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-amber-500 outline-none font-bold transition-all text-center" />
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><User size={14} /> Gender</label>
+                  <input readOnly value={suggestingPerson.gender} className="w-full px-6 py-4 bg-slate-100 border border-slate-200 rounded-2xl font-bold text-slate-500 capitalize cursor-not-allowed" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Phone size={14} /> Phone Number</label>
+                  <input name="phone" type="tel" defaultValue={suggestingPerson.phone} placeholder="e.g. 555-123-4567" className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-amber-500 focus:ring-4 focus:ring-amber-50 outline-none transition-all font-bold text-slate-800" />
+                </div>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><Mail size={14} /> Email Address</label>
+                  <input name="email" type="email" defaultValue={suggestingPerson.email} placeholder="e.g. john.smith@email.com" className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-amber-500 focus:ring-4 focus:ring-amber-50 outline-none transition-all font-bold text-slate-800" />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-[0.15em]"><FileText size={14} /> Biographical Documentation</label>
+                <textarea name="notes" defaultValue={suggestingPerson.notes} className="w-full px-6 py-5 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-amber-500 outline-none min-h-[140px] font-medium text-slate-600 leading-relaxed custom-scrollbar" placeholder="Suggest an addition or correction to the notes..." />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-4 pt-8 border-t border-slate-100">
+              <div className="flex gap-4">
+                <button type="button" onClick={() => setSuggestingPerson(null)} className="flex-1 py-4 font-bold text-slate-500 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-all active:scale-95">Cancel</button>
+                <button type="submit" className="flex-[2] py-4 font-black text-white bg-amber-500 rounded-2xl hover:bg-amber-600 shadow-2xl shadow-amber-100 hover:-translate-y-0.5 transition-all active:translate-y-0">Submit Suggestion</button>
+              </div>
+            </div>
+          </form>
+        )}
+      </Modal>
+
       {/* Add Spouse Modal */}
+
 
 
       {/* Add Spouse Modal */}
